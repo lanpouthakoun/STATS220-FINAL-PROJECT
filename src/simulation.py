@@ -44,30 +44,30 @@ class Local_Cell:
         self.load_parameters(params_file, spike_biophysics)
         # build dendrite-somatic part of cell 
         self.build_morphology_dendrites_soma()
-        h.setpointers()
-        # self.build_biophysics_dendrites()
         # h.setpointers()
-        # # self.build_biophysics_soma()
+        # # self.build_biophysics_dendrites()
+        # # h.setpointers()
+        # # # self.build_biophysics_soma()
+        # # h.setpointers()
+        # # # build axonal part of the cell
+        # # self.create_sections()
+        # # h.setpointers()
+        # # # self.build_biophysics_axon_hillock()
+        # # self.build_morphology_axon_hillock()
+        # # h.setpointers()
+        # # # self.build_biophysics_socb()
+        # # self.build_morphology_socb()
+        # # h.setpointers()
+        # # # self.build_biophysics_nr()
+        # # self.build_morphology_nr()
+        # # h.setpointers()
+        # # self.build_biophysics_distal_axon()
+        # # self.build_morphology_distal_axon()
         # h.setpointers()
-        # # build axonal part of the cell
-        # self.create_sections()
+        # # define subset list, useful for looping over sections
+        # # self.build_subsets()
+        # # set pointers
         # h.setpointers()
-        # # self.build_biophysics_axon_hillock()
-        # self.build_morphology_axon_hillock()
-        # h.setpointers()
-        # # self.build_biophysics_socb()
-        # self.build_morphology_socb()
-        # h.setpointers()
-        # # self.build_biophysics_nr()
-        # self.build_morphology_nr()
-        # h.setpointers()
-        # self.build_biophysics_distal_axon()
-        # self.build_morphology_distal_axon()
-        h.setpointers()
-        # define subset list, useful for looping over sections
-        self.build_subsets()
-        # set pointers
-        h.setpointers()
     
     def shift_cell_x_y_z(self, new_x, new_y, new_z):
         for sec in self.section_list:

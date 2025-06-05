@@ -1,0 +1,1 @@
+pip install neuron torch hoc2swc jaxley
