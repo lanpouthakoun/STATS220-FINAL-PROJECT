@@ -44,6 +44,7 @@ class Local_Cell:
         self.load_parameters(params_file, spike_biophysics)
         # build dendrite-somatic part of cell 
         self.build_morphology_dendrites_soma()
+        return self.axon_coords
         # h.setpointers()
         # # self.build_biophysics_dendrites()
         # # h.setpointers()
@@ -156,6 +157,7 @@ class Local_Cell:
         self.axon_coords = Build_Single_RGC(self.StartingCoordinates,\
                                                     self.NFLEntryCoordinates,\
                                                     self.Length)
+        print(self.axon_coords)
         h.setpointers()
 
     # This function is very hard-coded, as is, needs to be updated
@@ -259,6 +261,7 @@ class Local_Cell:
         param = self.params.iloc[2]
         # extract axon geometry
         xpts_axon = self.axon_coords[:,0]*(1000)
+        print(xpts_axon)
         ypts_axon = self.axon_coords[:,1]*(1000)
         zpts_axon = self.axon_coords[:,2]*(1000)
          # set axon hillock morphology 
