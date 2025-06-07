@@ -7,13 +7,15 @@ import pandas as pd
 # set working dir
 h.chdir("/Volumes/Lab/Users/vilkhu/workspace/rgc_simulaton/src")
 
-# Load NEURON dll
-if sys.platform.startswith('linux'): # LINUX
-    h.nrn_load_dll('../nrn/x86_64/.libs/libnrnmech.so') 
-elif sys.platform.startswith('win32'): # WINDOWS
-    h.nrn_load_dll('../nrn/nrnmech.dll') 
-elif sys.platform.startswith('darwin'): # MACOS
-    h.nrn_load_dll('../nrn/arm64/libnrnmech.dylib') 
+try:
+    # Load NEURON dll
+    if sys.platform.startswith('linux'): # LINUX
+        h.nrn_load_dll('../nrn/x86_64/.libs/libnrnmech.so') 
+    elif sys.platform.startswith('win32'): # WINDOWS
+        h.nrn_load_dll('../nrn/nrnmech.dll') 
+    elif sys.platform.startswith('darwin'): # MACOS
+        h.nrn_load_dll('../nrn/arm64/libnrnmech.dylib')
+except: pass
 
 #  Initialize cell morphology
 class Local_Cell:
