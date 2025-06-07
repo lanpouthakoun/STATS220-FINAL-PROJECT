@@ -1,0 +1,40 @@
+./capump.c: ../../nrn/capump.mod
+	@printf " -> $(C_GREEN)NMODL$(C_RESET) $<\\n"
+	(cd "../../nrn";  MODLUNIT=$(NRNUNITS) $(NOCMODL) "capump.mod" -o "/nfs/pool0/mikesomm/STATS220-FINAL-PROJECT/src/x86_64")
+
+./capump.o: ./capump.c
+	@printf " -> $(C_GREEN)Compiling$(C_RESET) $<\\n"
+	$(COMPILE) -I"../../nrn" $(INCLUDES) -fPIC -c $< -o $@
+
+./ingauss.c: ../../nrn/ingauss.mod
+	@printf " -> $(C_GREEN)NMODL$(C_RESET) $<\\n"
+	(cd "../../nrn";  MODLUNIT=$(NRNUNITS) $(NOCMODL) "ingauss.mod" -o "/nfs/pool0/mikesomm/STATS220-FINAL-PROJECT/src/x86_64")
+
+./ingauss.o: ./ingauss.c
+	@printf " -> $(C_GREEN)Compiling$(C_RESET) $<\\n"
+	$(COMPILE) -I"../../nrn" $(INCLUDES) -fPIC -c $< -o $@
+
+./mammalian_spike_35.c: ../../nrn/mammalian_spike_35.mod
+	@printf " -> $(C_GREEN)NMODL$(C_RESET) $<\\n"
+	(cd "../../nrn";  MODLUNIT=$(NRNUNITS) $(NOCMODL) "mammalian_spike_35.mod" -o "/nfs/pool0/mikesomm/STATS220-FINAL-PROJECT/src/x86_64")
+
+./mammalian_spike_35.o: ./mammalian_spike_35.c
+	@printf " -> $(C_GREEN)Compiling$(C_RESET) $<\\n"
+	$(COMPILE) -I"../../nrn" $(INCLUDES) -fPIC -c $< -o $@
+
+./mammalian_spike.c: ../../nrn/mammalian_spike.mod
+	@printf " -> $(C_GREEN)NMODL$(C_RESET) $<\\n"
+	(cd "../../nrn";  MODLUNIT=$(NRNUNITS) $(NOCMODL) "mammalian_spike.mod" -o "/nfs/pool0/mikesomm/STATS220-FINAL-PROJECT/src/x86_64")
+
+./mammalian_spike.o: ./mammalian_spike.c
+	@printf " -> $(C_GREEN)Compiling$(C_RESET) $<\\n"
+	$(COMPILE) -I"../../nrn" $(INCLUDES) -fPIC -c $< -o $@
+
+./xtra.c: ../../nrn/xtra.mod
+	@printf " -> $(C_GREEN)NMODL$(C_RESET) $<\\n"
+	(cd "../../nrn";  MODLUNIT=$(NRNUNITS) $(NOCMODL) "xtra.mod" -o "/nfs/pool0/mikesomm/STATS220-FINAL-PROJECT/src/x86_64")
+
+./xtra.o: ./xtra.c
+	@printf " -> $(C_GREEN)Compiling$(C_RESET) $<\\n"
+	$(COMPILE) -I"../../nrn" $(INCLUDES) -fPIC -c $< -o $@
+
