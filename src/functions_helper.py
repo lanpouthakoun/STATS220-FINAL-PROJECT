@@ -10,14 +10,13 @@ import imageio
 import base64
 from constants import LITKE_519_ARRAY_MAP
 
-def compute_comp_xyz(cell):
+def compute_comp_xyz(params):
     '''
     Returns (Ncomps, 3) array of xyz positions of all the compartments
     '''
-    cell.compute_compartment_centers()
-    xs = cell.nodes["x"].to_numpy()
-    ys = cell.nodes["y"].to_numpy()
-    zs = cell.nodes["z"].to_numpy()
+    xs = params['x']
+    ys = params['y']
+    zs = params['z']
 
     comp_xyz = jnp.stack([xs,ys,zs],axis=1)
 
@@ -37,13 +36,12 @@ def distance(grid, cell_positions):
 
     return vmap(vmap(_distance, in_axes=(None, 0)),in_axes=(0, None))(grid, cell_positions)
 
-def get_surface_areas(cell):
+def get_surface_areas(params, lengths):
 
     '''
     Returns (Ncomps,) array of the surface areas in um2 of all the compartments
     '''
-    radii = cell.nodes["radius"].to_numpy()
-    lengths = cell.nodes["length"].to_numpy()
+    radii = params['radius']
     surf_areas = 2*jnp.pi*radii*lengths
     return surf_areas
 
