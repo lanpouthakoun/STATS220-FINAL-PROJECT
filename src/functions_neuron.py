@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from neuron import h
+import matplotlib.pyplot as plt
 
 def unit(vector):
     a=vector[0]
@@ -496,3 +497,42 @@ class Local_Cell:
             offset = AH_length + SOCB_length + NR_length
             self.axon.pt3dadd(xpts_axon[i+offset],ypts_axon[i+offset],\
                            zpts_axon[i+offset],float(param['diameter']))
+            
+def generate_cell_neuron(params_file, cell_name):
+    # Build cell
+    RGC = Local_Cell()
+    RGC.build_cell(params_file, cell_name)
+    RGC.section_list
+    # Save the number of segments and indices of branches
+    sec_lu = np.zeros((len(RGC.section_list), 2))
+    for i in range(len(RGC.section_list)):
+        if "soma" in str(RGC.section_list[i]):
+            sec_lu[i, 0] = 0
+        elif "dend" in str(RGC.section_list[i]):
+            sec_lu[i, 0] = 1
+        elif "AH" in str(RGC.section_list[i]):
+            sec_lu[i, 0] = 2
+        elif "SOCB" in str(RGC.section_list[i]):
+            sec_lu[i, 0] = 3
+        elif "NR" in str(RGC.section_list[i]):
+            sec_lu[i, 0] = 4
+        elif "axon" in str(RGC.section_list[i]):
+            sec_lu[i, 0] = 5
+        else:
+            print("Error: Section not found")
+        sec_lu[i, 1] = RGC.section_list[i].nseg
+    return RGC, sec_lu
+
+def plot_cell_neuron(cell):
+    fig, ax = plt.subplots(figsize=(8, 8))
+    for sec in cell.section_list:
+        for seg in sec:
+            ax.plot(seg.x_xtra, seg.y_xtra, 'o', color='black', markersize=2)
+
+    ax.set_aspect('equal')
+    ax.set_xlim([-400,400])
+    ax.set_ylim([-450,450])
+    ax.set_title('Model')
+    ax.set_xlabel('x [um]')
+    ax.set_ylabel('y [um]')
+    plt.show()
