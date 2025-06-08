@@ -48,21 +48,18 @@ def get_surface_areas(cell):
     surf_areas = 2*jnp.pi*radii*lengths
     return surf_areas
 
-def compute_eap(outputs, ncomps, surf_areas_CM2, true_distances_CM):
+def compute_eap(sim_outputs, current_distances, compartment_surface_areas, rho=1000):
     '''
     Input: Output of jx.integrate (of shape 3*T here). Last row is the HH_current.
     Output: (N_points, T) array of EAPs across time at each probe site.
     '''
-    outputs = outputs.reshape(4, ncomps, -1)
-    rho = 1000 #(cf.ej chilchinisky)
     resistivity = rho/(4*jnp.pi)
-    surf_currents = outputs[1:]
-    currents = surf_currents * surf_areas_CM2[None,:,None]
-    extr_voltage = jnp.sum(currents.sum(axis=0) / true_distances_CM[:,:,None], axis=1) * resistivity
+    surface_currents = sim_outputs[1:]
+    currents = surface_currents * compartment_surface_areas[None,:,None]
+    v_extra = jnp.sum(currents.sum(axis=0) / current_distances[:,:,None], axis=1) * resistivity
+    return v_extra
 
-    return extr_voltage
-
-def __plot_static_ei_helper(ei:np.ndarray, LITKE_ARRAY_MAP:np.ndarray, title:str, ax=None, special_elecs:np.ndarray=None, basecolor='r', special_colors=None):
+def __plot_static_ei_helper(ei:np.ndarray, LITKE_ARRAY_MAP:np.ndarray, title:str, ax=None, special_elecs:np.ndarray=None, basecolor='r', special_colors=None, cell=None):
     """
     Takes in a 2D EI which is (time_sample, channels)
     Plots the electrode array as a scatter plot where the size of the dot is proportional to the absolute value of the most
@@ -92,7 +89,15 @@ def __plot_static_ei_helper(ei:np.ndarray, LITKE_ARRAY_MAP:np.ndarray, title:str
         for elec, color in zip(special_elecs, special_colors):
             ax.scatter(LITKE_ARRAY_MAP[elec, 0], LITKE_ARRAY_MAP[elec, 1], s=channel_vals[elec] * 5, c=color)
             
-def plot_static_ei_519(ei:np.ndarray, title:str, ax=None, special_color_elecs=None, basecolor='r', special_colors=None):
+    if cell is not None:
+        cell.vis(ax=ax)
+        ax.set_aspect('equal')
+        ax.set_xlim([-400,400])
+        ax.set_ylim([-450,450])
+        ax.set_xlabel('x [um]')
+        ax.set_ylabel('y [um]')
+            
+def plot_static_ei_519(ei:np.ndarray, title:str, ax=None, special_color_elecs=None, basecolor='r', special_colors=None, cell=None):
     """
     Takes in a 2D EI which is (time_sample, channels)
     Plots the electrode array as a scatter plot where the size of the dot is proportional to the absolute value of the most
@@ -103,9 +108,9 @@ def plot_static_ei_519(ei:np.ndarray, title:str, ax=None, special_color_elecs=No
     adjusted_elecs = special_color_elecs
     if special_color_elecs is not None:
         adjusted_elecs = np.array(special_color_elecs) - 1
-    __plot_static_ei_helper(ei[:, 1:], LITKE_519_ARRAY_MAP, title, ax=ax, special_elecs=adjusted_elecs, basecolor=basecolor, special_colors=special_colors)
+    __plot_static_ei_helper(ei[:, 1:], LITKE_519_ARRAY_MAP, title, ax=ax, special_elecs=adjusted_elecs, basecolor=basecolor, special_colors=special_colors, cell=cell)
     
-def __animate_helper(raw_data: np.ndarray, LITKE_ARRAY_MAP:np.ndarray, num_elecs:int, scalar: int = 10, auto_mean_adjust: bool = False, stim_electrodes=[], save_path=None, fps=10, noise_thresh=0.0, title="", presentable=False) -> FuncAnimation:
+def __animate_helper(raw_data: np.ndarray, LITKE_ARRAY_MAP:np.ndarray, num_elecs:int, scalar: int = 10, auto_mean_adjust: bool = False, stim_electrodes=[], save_path=None, fps=10, noise_thresh=0.0, title="", presentable=False, cell=None) -> FuncAnimation:
     """
     Creates an animation to visualize the activity of an electrode map.
 
@@ -140,6 +145,14 @@ def __animate_helper(raw_data: np.ndarray, LITKE_ARRAY_MAP:np.ndarray, num_elecs
         baseline = raw_data[0, :]
     else:
         baseline = 0
+        
+    if cell is not None:
+        cell.vis(ax=ax)
+        ax.set_aspect('equal')
+        ax.set_xlim([-400,400])
+        ax.set_ylim([-450,450])
+        ax.set_xlabel('x [um]')
+        ax.set_ylabel('y [um]')
 
     def animate(i):
         new_sizes = np.abs((raw_data[i, :] - baseline)) * scalar
@@ -148,6 +161,8 @@ def __animate_helper(raw_data: np.ndarray, LITKE_ARRAY_MAP:np.ndarray, num_elecs
         n.set_color(np.where(raw_data[i, :] > baseline, 'blue', 'red'))
         if not presentable:
             label.set_text(f'{i+1}/{raw_data.shape[0]}')
+        #if cell is not None:
+        #    cell.vis(ax=ax)
 
     if save_path is None:
         anim = FuncAnimation(fig, animate, frames=raw_data.shape[0], interval=100)
@@ -164,13 +179,13 @@ def __animate_helper(raw_data: np.ndarray, LITKE_ARRAY_MAP:np.ndarray, num_elecs
         imageio.mimsave(save_path, frames, duration=int(1000/fps), format='GIF', loop=0)
         plt.close(fig)
 
-def animate_519_array(raw_data: np.ndarray, scalar: int = 10, auto_mean_adjust: bool = False, stim_electrodes = [], save_path=None, fps=10, noise_thresh=0.0, title="", presentable=False) -> FuncAnimation:
+def animate_519_array(raw_data: np.ndarray, scalar: int = 10, auto_mean_adjust: bool = False, stim_electrodes = [], save_path=None, fps=10, noise_thresh=0.0, title="", presentable=False, cell=None) -> FuncAnimation:
     """
     Creates an animation to visualize the activity of the 519 electrode array.
     """
     assert raw_data.ndim ==2, f'data must have 2 dimensions, time and electrodes, but has {raw_data.ndim} dimensions.'
     assert raw_data.shape[1] == 520, f'raw_data must have 520 columns, but has {raw_data.shape[1]} columns.'
-    return __animate_helper(raw_data[:, 1:], LITKE_519_ARRAY_MAP, 519, scalar=scalar, auto_mean_adjust=auto_mean_adjust, stim_electrodes=[e-1 for e in stim_electrodes], save_path=save_path, fps=fps, noise_thresh=noise_thresh, title=title, presentable=presentable)
+    return __animate_helper(raw_data[:, 1:], LITKE_519_ARRAY_MAP, 519, scalar=scalar, auto_mean_adjust=auto_mean_adjust, stim_electrodes=[e-1 for e in stim_electrodes], save_path=save_path, fps=fps, noise_thresh=noise_thresh, title=title, presentable=presentable, cell=cell)
 
 _VIDEO_TAG = """<video controls>
  <source src="data:video/x-m4v;base64,{0}" type="video/mp4">
@@ -218,3 +233,50 @@ def with_ttl(raw_data:np.ndarray):
   append_data_shape[critical_axis] = 1
   append_data = np.zeros(append_data_shape)
   return np.concatenate((append_data, raw_data), axis=critical_axis)
+
+def plot_default_simulation_output(sim_outputs, current, time_vec):
+
+    fig, axs = plt.subplots(4, 1, figsize=(10, 12), sharex=True)
+
+    axs[0].plot(time_vec, sim_outputs[0, :, :].T)
+    axs[0].set_ylabel('voltage (mV)')
+    axs[0].set_title('Membrane Voltage by Compartment')
+
+    axs[1].plot(time_vec, sim_outputs[1, :, :].T)
+    axs[1].set_ylabel('current (nA)')
+    axs[1].set_title('HH Channels Current by Compartment')
+
+    axs[2].plot(time_vec, sim_outputs[2, :, :].T)
+    axs[2].set_ylabel('current (nA)')
+    axs[2].set_title('Ca Channel Current by Compartment')
+
+    axs[3].plot(time_vec, sim_outputs[3, :, :].T)
+    axs[3].set_ylabel('current (nA)')
+    axs[3].set_title('KCa Channel Current by Compartment')
+    axs[3].set_xlabel('time (ms)')
+
+    # Plot the stimulus current on the right axis of each plot
+    for ax in axs:
+        ax2 = ax.twinx()
+        ax2.plot(time_vec[:-1], current, label='Stimulus Current (nA)', color='blue', linestyle='--')
+        ax2.set_ylabel('Stimulus Current (nA)')
+        ax2.tick_params(axis='y', labelcolor='blue')
+    plt.tight_layout()
+    plt.show()
+
+def plot_cell_array_3D(current_compartment_positions, array_grid):
+    
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    # Scatter the electrode array
+    ax.scatter(array_grid[:, 0], array_grid[:, 1], array_grid[:, 2], c='black', s=10, label='Electrode Array')
+    # Scatter the cell compartment locations stored in true_comp_positions
+    ax.scatter(current_compartment_positions[:, 0], current_compartment_positions[:, 1], current_compartment_positions[:, 2], c='red', s=10, label='Cell Compartments')
+    ax.set_xlim([-400,400])
+    ax.set_ylim([-450,450])
+    ax.set_xlabel('x [um]')
+    ax.set_ylabel('y [um]')
+    ax.set_title('Electrode Array and Cell Compartments in 3D')
+    # rotate the view to be most visible
+    ax.view_init(elev=0, azim=270)
+    plt.show()
