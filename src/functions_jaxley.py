@@ -215,7 +215,7 @@ class KCa(Channel):
         super().__init__(name)
         self.channel_params = {
             "gKCa": 0.05e-3,  # S/cm^2
-            "eK": -102.03,  # mV
+            "HH_eK": -101.34,  # mV
             "Cad": 1e-3, #mM
         }
         self.channel_states = {"Cai": 1e-4}
@@ -231,7 +231,7 @@ class KCa(Channel):
         Cad = params["Cad"]
         x = (Cai / Cad) ** 2
         gKCa = params["gKCa"] * x / (1 + x)  # S/cm^2
-        return gKCa * (v - params["eK"])  # S/cm^2 * mV = mA/cm^2
+        return gKCa * (v - params["HH_eK"])  # S/cm^2 * mV = mA/cm^2
 
     def init_state(self, states, v, params, delta_t):
         """Initialize the state such at fixed point of gate dynamics."""
