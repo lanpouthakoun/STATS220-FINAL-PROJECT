@@ -522,3 +522,8 @@ LITKE_519_ARRAY_MAP = jnp.array([
     [270.0, -225.0],
     [270.0, -255.0],
     [300.0, -240.0]])
+
+LITKE_519_ARRAY_GRID = jnp.stack(
+    [LITKE_519_ARRAY_MAP[:, 0],
+     LITKE_519_ARRAY_MAP[:, 1],
+     jnp.zeros_like(LITKE_519_ARRAY_MAP[:, 0])], axis=-1)
