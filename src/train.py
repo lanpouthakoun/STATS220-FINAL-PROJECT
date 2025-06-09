@@ -45,11 +45,13 @@ class JaxleyTrainer:
         self.delta_t = 0.05 # ms
         self.t_max = 5
         
-
+        
+        self.current_compartment_positions = fh.compute_comp_xyz(self.cell)
+        self.compartment_surface_areas = fh.get_surface_areas(self.cell) * 10E-8  # Calculate surface areas in cm^2
         self.opt_params = self.tf.inverse(self.params)
         self.optimizer = optax.chain(
-            optax.clip_by_global_norm(1.0),            
-            optax.adam(learning_rate=1e-5)   
+            optax.clip_by_global_norm(1.0),  # <-- ADD THIS LINE
+            optax.adam(learning_rate=1e-1)
         )
         self.opt_state = self.optimizer.init(self.opt_params)
         self.num_epochs = epochs
@@ -73,7 +75,6 @@ class JaxleyTrainer:
                 all_y.append(param_dict['y'])
             if 'z' in param_dict:
                 all_z.append(param_dict['z'])
-        print(all_z)
         # Concatenate all compartment coordinates
         xs = jnp.concatenate(all_x) 
         ys = jnp.concatenate(all_y) 
@@ -93,40 +94,64 @@ class JaxleyTrainer:
             if 'radius' in param_dict:
                 all_radii.append(param_dict['radius'])
 
-        print(all_radii)        
         radii = jnp.concatenate(all_radii) 
 
         
         surf_areas = 2 * jnp.pi * radii * self.lengths
         return surf_areas
     
-    def create_transforms(self, name):
-        """ transforms"""
-        if name == 'z':
-            return jt.AffineTransform(1.0, -1.0) 
-        elif name == 'radius':
+    def create_transforms(self, name: str) -> jt.Transform:
+        """
+        Creates robust parameter transformations using SigmoidTransform
+        for physical constraints.
+        """
+        # --- For morphology coordinates ---
+        if name in ['x', 'y', 'z']:
+            return jt.AffineTransform(1.0, 0.0)  # No constraints
+        # if name == 'z':
+        #     return jt.AffineTransform(1.0, -1.0) # Example constraint
 
-            return jt.ChainTransform([
-                jt.AffineTransform(1.0, 1e-6), 
-                jt.SoftplusTransform(0) 
-            ])
-        elif name == 'axial_resistivity':
-            jt.ChainTransform([
-                jt.AffineTransform(100.0, 0), 
-                jt.SoftplusTransform(0) 
-            ])
-        else:  # x, y
-            return jt.AffineTransform(1.0, 0.0)  
+        # --- For physical parameters that must be positive ---
+
+        # For neuron radius in micrometers (µm)
+        if name == 'radius':
+            # Constrains radius to a plausible range, e.g., 0.1µm to 5µm
+            return jt.SigmoidTransform(0.1, 5.0)
+
+        # For the main voltage-gated conductances (e.g., mS/cm^2)
+        if name in ['HH_gNa', 'HH_gK', 'gCa']:
+            # Allow a wide range for these important conductances
+            return jt.SigmoidTransform(1e-6, 500.0)
+
+        # For leak or smaller conductances
+        if name in ['HH_gLeak', 'gKCa']:
+            # Constrain to a typically smaller range
+            return jt.SigmoidTransform(1e-6, 1.0)
+
+        # For axial resistivity (Ohm-cm)
+        if name == 'axial_resistivity':
+            return jt.SigmoidTransform(50.0, 500.0)
+
+        # --- For parameters without positivity constraints ---
+
+        # For reversal potentials (e.g., eNa, eK), which can be negative
+        if 'e' in name:
+            # A simple affine transform is fine, or none at all.
+            return jt.AffineTransform(1.0, 0.0)
+
+        # Default for any other parameters
+        return jt.AffineTransform(1.0, 0.0)
+        
         
     def setup_params(self):
         self.cell.delete_trainables()
         self.cell.comp("all").make_trainable("x")
         self.cell.comp("all").make_trainable("y")
         self.cell.comp("all").make_trainable("z")
-        self.cell.comp("all").make_trainable("radius")
+        # self.cell.comp("all").make_trainable("radius")
         # self.cell.comp("all").make_trainable("HH_eNa")
         # self.cell.comp("all").make_trainable("HH_eK")
-        # self.cell.comp("all").make_trainable('axial_resistivity')
+        # # self.cell.comp("all").make_trainable('axial_resistivity')
         # self.cell.comp("all").make_trainable('HH_gNa')
         # self.cell.comp("all").make_trainable('HH_gLeak')
         # self.cell.comp("all").make_trainable('gCa')
@@ -141,13 +166,16 @@ class JaxleyTrainer:
         
         """
         
-        self.cell.set('v', -64)  # mV (matching h.v_init = -64)
         
+        
+        delta_t = 0.05 # ms
+        t_max = 5
+        time_vec = np.arange(0, t_max+2*delta_t, delta_t)
+
         i_delay = 1.0 
         i_dur = 0.5
-        i_amp = 3.9
-        current = jx.step_current(i_delay=i_delay, i_dur=i_dur, i_amp=i_amp, 
-                                 delta_t=self.delta_t, t_max=self.t_max)
+        i_amp = 15
+        current = jx.step_current(i_delay=i_delay, i_dur=i_dur, i_amp=i_amp, delta_t=delta_t, t_max=t_max)
 
         self.cell.delete_stimuli()
         data_stimuli = None
@@ -159,7 +187,7 @@ class JaxleyTrainer:
         self.cell.record("i_Ca")
         self.cell.record("i_KCa")
 
-        sim_outputs = jx.integrate(self.cell, params=params, data_stimuli=data_stimuli).reshape(4, self.ncomp, -1)
+        sim_outputs = jx.integrate(self.cell, params = params, data_stimuli=data_stimuli).reshape(4, self.ncomp, -1)
         return sim_outputs
     
     def gen_ei(self, outputs, transformed_params):
@@ -171,10 +199,11 @@ class JaxleyTrainer:
 
         time_vec = np.arange(0, self.t_max+2*self.delta_t, self.delta_t)
         current_compartment_positions = self.compute_comp_xyz(transformed_params)
-        compartment_surface_areas = self.get_surface_areas(transformed_params) * 10E-8  # Calculate surface areas in cm^2
+        # compartment_surface_areas = self.get_surface_areas(transformed_params) * 10E-8  # Calculate surface areas in cm^2
+        
         current_distance = fh.distance(LITKE_519_ARRAY_GRID, current_compartment_positions) * 10E-4 
         
-        sim_v_extra = fh.compute_eap(outputs, current_distance, compartment_surface_areas) \
+        sim_v_extra = fh.compute_eap(outputs, current_distance, self.compartment_surface_areas) \
              + tfd.Normal(0, 0.0001).sample((self.N_ELECTRODES, len(time_vec)), seed=seed)
         sim_EI = self.with_ttl(sim_v_extra).T
         return sim_EI
@@ -202,6 +231,11 @@ class JaxleyTrainer:
         
         return jnp.concatenate((append_data, raw_data), axis=critical_axis)
 
+    def predict(self, params):
+        outputs = self.simulate(params)
+        predicted_ei = self.gen_ei(outputs, params)
+        return predicted_ei
+
     def loss(self, opt_params, true_ei):
         """
         Computes a loss that is robust to temporal shifts by using a
@@ -209,10 +243,10 @@ class JaxleyTrainer:
         """
         # 1. Simulate to get the predicted electrical image (EI)
         transformed_params = self.tf.forward(opt_params)
-        outputs = self.simulate(transformed_params)
-        predicted_ei = self.gen_ei(outputs, transformed_params)
+        predicted_ei = self.predict(transformed_params)
 
-        # Make shapes and sizes dynamic and robust
+       
+
         true_len = true_ei.shape[0]
         pred_len = predicted_ei.shape[0]
         n_electrodes = true_ei.shape[1]
@@ -242,8 +276,8 @@ class JaxleyTrainer:
         offsets = jnp.arange(max_offset + 1)
         all_mse_losses = vmap(compute_loss_at_offset)(offsets)
 
-
-        temperature = 10.0
+        
+        temperature = 1.0
         weights = jax.nn.softmax(-all_mse_losses * temperature)
 
         final_loss = jnp.sum(weights * all_mse_losses)
@@ -267,13 +301,14 @@ class JaxleyTrainer:
             updates, self.opt_state = self.optimizer.update(gradient, self.opt_state)
             self.opt_params = optax.apply_updates(self.opt_params, updates)
             epoch_loss += loss_val
-            self.cell.compute_compartment_centers()
+            # self.cell.compute_compartment_centers()
         
             print(f"epoch {epoch}, loss {epoch_loss}")
             epoch_losses.append(epoch_loss)
-        sim_outputs = self.simulate(self.opt_params)
-        sim_ei = self.gen_ei(sim_outputs, self.opt_params)
-        return fh.animate_519_array(sim_ei, title="Example Electrical Image", cell=self.cell), fh.plot_default_simulation_output(sim_outputs, current, time_vec)
+        final_params = self.tf.forward(self.opt_params)
+
+        sim_ei = self.predict(final_params)
+        return fh.animate_519_array(sim_ei, title="Example Electrical Image", cell=self.cell)
     
     
         
