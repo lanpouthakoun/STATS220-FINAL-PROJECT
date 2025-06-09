@@ -47,10 +47,10 @@ class JaxleyTrainer:
         
         
         self.current_compartment_positions = fh.compute_comp_xyz(self.cell)
-        self.compartment_surface_areas = fh.get_surface_areas(self.cell) * 10E-8  # Calculate surface areas in cm^2
+        self.compartment_surface_areas = fh.get_surface_areas(self.cell) * 10E-8  
         self.opt_params = self.tf.inverse(self.params)
         self.optimizer = optax.chain(
-            optax.clip_by_global_norm(1.0),  # <-- ADD THIS LINE
+            optax.clip_by_global_norm(1.0), 
             optax.adam(learning_rate=1e-1)
         )
         self.opt_state = self.optimizer.init(self.opt_params)
@@ -63,7 +63,6 @@ class JaxleyTrainer:
         '''
         
         # 
-        # Extract x, y, z from all compartments
         all_x = []
         all_y = []
         all_z = []
@@ -75,19 +74,34 @@ class JaxleyTrainer:
                 all_y.append(param_dict['y'])
             if 'z' in param_dict:
                 all_z.append(param_dict['z'])
-        # Concatenate all compartment coordinates
         xs = jnp.concatenate(all_x) 
         ys = jnp.concatenate(all_y) 
         zs = jnp.concatenate(all_z) 
         
         comp_xyz = jnp.stack([xs, ys, zs], axis=1)
         return comp_xyz
+    
+    def final_compute_xyz(self, transformed_params):
+        all_x = []
+        all_y = []
+        all_z = []
+    
+        for param_dict in transformed_params:
+            if 'x' in param_dict:
+                all_x.append(param_dict['x'])
+            if 'y' in param_dict:
+                all_y.append(param_dict['y'])
+            if 'z' in param_dict:
+                all_z.append(param_dict['z'])
+        xs = jnp.concatenate(all_x) 
+        ys = jnp.concatenate(all_y) 
+        zs = jnp.concatenate(all_z) 
+        return xs, ys, zs
     def get_surface_areas(self, transformed_params):
         '''
         Returns (Ncomps,) array of the surface areas in um2 of all the compartments
         JAX-compatible version
         '''
-        # Use JAX arrays directly instead of converting to numpy
         all_radii = []
         
         for param_dict in transformed_params:
@@ -108,38 +122,7 @@ class JaxleyTrainer:
         # --- For morphology coordinates ---
         if name in ['x', 'y', 'z']:
             return jt.AffineTransform(1.0, 0.0)  # No constraints
-        # if name == 'z':
-        #     return jt.AffineTransform(1.0, -1.0) # Example constraint
-
-        # --- For physical parameters that must be positive ---
-
-        # For neuron radius in micrometers (µm)
-        if name == 'radius':
-            # Constrains radius to a plausible range, e.g., 0.1µm to 5µm
-            return jt.SigmoidTransform(0.1, 5.0)
-
-        # For the main voltage-gated conductances (e.g., mS/cm^2)
-        if name in ['HH_gNa', 'HH_gK', 'gCa']:
-            # Allow a wide range for these important conductances
-            return jt.SigmoidTransform(1e-6, 500.0)
-
-        # For leak or smaller conductances
-        if name in ['HH_gLeak', 'gKCa']:
-            # Constrain to a typically smaller range
-            return jt.SigmoidTransform(1e-6, 1.0)
-
-        # For axial resistivity (Ohm-cm)
-        if name == 'axial_resistivity':
-            return jt.SigmoidTransform(50.0, 500.0)
-
-        # --- For parameters without positivity constraints ---
-
-        # For reversal potentials (e.g., eNa, eK), which can be negative
-        if 'e' in name:
-            # A simple affine transform is fine, or none at all.
-            return jt.AffineTransform(1.0, 0.0)
-
-        # Default for any other parameters
+        
         return jt.AffineTransform(1.0, 0.0)
         
         
@@ -151,7 +134,7 @@ class JaxleyTrainer:
         # self.cell.comp("all").make_trainable("radius")
         # self.cell.comp("all").make_trainable("HH_eNa")
         # self.cell.comp("all").make_trainable("HH_eK")
-        # # self.cell.comp("all").make_trainable('axial_resistivity')
+        # self.cell.comp("all").make_trainable('axial_resistivity')
         # self.cell.comp("all").make_trainable('HH_gNa')
         # self.cell.comp("all").make_trainable('HH_gLeak')
         # self.cell.comp("all").make_trainable('gCa')
@@ -241,38 +224,29 @@ class JaxleyTrainer:
         Computes a loss that is robust to temporal shifts by using a
         differentiable soft-alignment mechanism.
         """
-        # 1. Simulate to get the predicted electrical image (EI)
         transformed_params = self.tf.forward(opt_params)
         predicted_ei = self.predict(transformed_params)
-
-       
 
         true_len = true_ei.shape[0]
         pred_len = predicted_ei.shape[0]
         n_electrodes = true_ei.shape[1]
         max_offset = pred_len - true_len
 
-        # Define a function to compute loss at a single offset
         def compute_loss_at_offset(offset):
-            # Slice the predicted EI to match the true EI's length
             pred_window = lax.dynamic_slice(
                 predicted_ei,
                 start_indices=[offset, 0],
                 slice_sizes=[true_len, n_electrodes]
             )
 
-            # --- Stability Fix ---
-            # Normalize both signals to focus on shape, not amplitude.
-            # Use a larger epsilon for stability, especially if a window is flat (std=0).
+            
             epsilon = 1e-6
             pred_norm = (pred_window - jnp.mean(pred_window)) / (jnp.std(pred_window) + epsilon)
             true_norm = (true_ei - jnp.mean(true_ei)) / (jnp.std(true_ei) + epsilon)
 
-            # The loss for this specific alignment is the Mean Squared Error
             mse = jnp.mean((pred_norm - true_norm)**2)
             return mse
 
-        # 2. Calculate the loss for ALL possible offsets
         offsets = jnp.arange(max_offset + 1)
         all_mse_losses = vmap(compute_loss_at_offset)(offsets)
 
@@ -293,7 +267,7 @@ class JaxleyTrainer:
             
             loss_val, gradient = self.jitted_grad(self.opt_params, self.data_point)
             flat_grads, _ = jax.tree_util.tree_flatten(gradient)
-            if flat_grads: # Ensure list is not empty
+            if flat_grads: 
                 grad_norm = jnp.linalg.norm(jnp.concatenate([g.flatten() for g in flat_grads]))
                 print(f"Epoch {epoch}, Loss {loss_val}, Grad Norm: {grad_norm}")
             else:
@@ -301,14 +275,18 @@ class JaxleyTrainer:
             updates, self.opt_state = self.optimizer.update(gradient, self.opt_state)
             self.opt_params = optax.apply_updates(self.opt_params, updates)
             epoch_loss += loss_val
-            # self.cell.compute_compartment_centers()
         
             print(f"epoch {epoch}, loss {epoch_loss}")
             epoch_losses.append(epoch_loss)
         final_params = self.tf.forward(self.opt_params)
+        # xs,ys,zs = self.final_compute_xyz(final_params) 
+        # self.cell.comp(all).move_to(xs,ys,zs, update_nodes=True)
+
+
+
 
         sim_ei = self.predict(final_params)
-        return fh.animate_519_array(sim_ei, title="Example Electrical Image", cell=self.cell)
+        return final_params, fh.animate_519_array(sim_ei, title="Example Electrical Image", cell=self.cell)
     
     
         
