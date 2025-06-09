@@ -12,11 +12,13 @@ from helperFuncs import generate_electrode_map
 import jaxley.optimize.transforms as jt
 import functions_helper as fh
 from constants import LITKE_519_ARRAY_MAP, LITKE_519_ARRAY_GRID
-
 from jax import random
 import tensorflow_probability.substrates.jax as tfp
 import optax
 from jax import jit, vmap, value_and_grad
+import jax
+import jax.lax as lax
+
 
 
 class JaxleyTrainer:
@@ -45,7 +47,10 @@ class JaxleyTrainer:
         
 
         self.opt_params = self.tf.inverse(self.params)
-        self.optimizer = optax.adam(learning_rate=1e-7)
+        self.optimizer = optax.chain(
+            optax.clip_by_global_norm(1.0),            
+            optax.adam(learning_rate=1e-5)   
+        )
         self.opt_state = self.optimizer.init(self.opt_params)
         self.num_epochs = epochs
         self.jitted_grad = jit(value_and_grad(self.loss, argnums=0))
@@ -96,15 +101,22 @@ class JaxleyTrainer:
         return surf_areas
     
     def create_transforms(self, name):
+        """ transforms"""
         if name == 'z':
-            return jt.ChainTransform([
-                jt.SoftplusTransform(0),  # Maps to (0, +∞)
-                jt.AffineTransform(-1, -10)  # Maps to (-∞, -10)
-            ])
+            return jt.AffineTransform(1.0, -1.0) 
         elif name == 'radius':
-            return jt.SoftplusTransform(0)
-        else:
-            return jt.AffineTransform(1, 0.00001)
+
+            return jt.ChainTransform([
+                jt.AffineTransform(1.0, 1e-6), 
+                jt.SoftplusTransform(0) 
+            ])
+        elif name == 'axial_resistivity':
+            jt.ChainTransform([
+                jt.AffineTransform(100.0, 0), 
+                jt.SoftplusTransform(0) 
+            ])
+        else:  # x, y
+            return jt.AffineTransform(1.0, 0.0)  
         
     def setup_params(self):
         self.cell.delete_trainables()
@@ -112,6 +124,15 @@ class JaxleyTrainer:
         self.cell.comp("all").make_trainable("y")
         self.cell.comp("all").make_trainable("z")
         self.cell.comp("all").make_trainable("radius")
+        # self.cell.comp("all").make_trainable("HH_eNa")
+        # self.cell.comp("all").make_trainable("HH_eK")
+        # self.cell.comp("all").make_trainable('axial_resistivity')
+        # self.cell.comp("all").make_trainable('HH_gNa')
+        # self.cell.comp("all").make_trainable('HH_gLeak')
+        # self.cell.comp("all").make_trainable('gCa')
+        # self.cell.comp("all").make_trainable('HH_gK')
+        # self.cell.comp("all").make_trainable('gKCa')
+
         return self.cell.get_parameters()
 
 
@@ -162,20 +183,12 @@ class JaxleyTrainer:
         shape_array = jnp.array(raw_data.shape)
         has_512 = jnp.any(shape_array == 512)
         has_519 = jnp.any(shape_array == 519)
-        
-        # JAX-compatible way to find the critical axis
-        # We'll use conditional logic that works with JAX
+  
         critical_axis_512 = jnp.where(shape_array == 512, size=1, fill_value=-1)[0]
         critical_axis_519 = jnp.where(shape_array == 519, size=1, fill_value=-1)[0]
         
-        # Use JAX conditional to select the right axis
         critical_axis = jnp.where(has_512, critical_axis_512, critical_axis_519)
-        
-        # For JAX compatibility, we need to handle this differently
-        # Since we can't use Python assertions in JIT, we'll assume the input is valid
-        # and use the 512 case if present, otherwise 519
-        
-        # Create append_data_shape by modifying the shape
+
         append_data_shape = list(raw_data.shape)
         
         # Find which axis has 512 or 519
@@ -189,35 +202,79 @@ class JaxleyTrainer:
         
         return jnp.concatenate((append_data, raw_data), axis=critical_axis)
 
-
     def loss(self, opt_params, true_ei):
         """
-        Compute loss between predicted and true extracellular potential
+        Computes a loss that is robust to temporal shifts by using a
+        differentiable soft-alignment mechanism.
         """
-        # Transform unconstrained parameters to constrained parameters
+        # 1. Simulate to get the predicted electrical image (EI)
         transformed_params = self.tf.forward(opt_params)
-        
-        # Simulate with transformed parameters
-        outputs = self.simulate(opt_params)
+        outputs = self.simulate(transformed_params)
         predicted_ei = self.gen_ei(outputs, transformed_params)
-        
-        # Match dimensions
-        print(predicted_ei.shape)
-        predicted_ei = predicted_ei[41:, :]
-        losses = (predicted_ei - true_ei)**2 
-        return jnp.mean(losses) 
+
+        # Make shapes and sizes dynamic and robust
+        true_len = true_ei.shape[0]
+        pred_len = predicted_ei.shape[0]
+        n_electrodes = true_ei.shape[1]
+        max_offset = pred_len - true_len
+
+        # Define a function to compute loss at a single offset
+        def compute_loss_at_offset(offset):
+            # Slice the predicted EI to match the true EI's length
+            pred_window = lax.dynamic_slice(
+                predicted_ei,
+                start_indices=[offset, 0],
+                slice_sizes=[true_len, n_electrodes]
+            )
+
+            # --- Stability Fix ---
+            # Normalize both signals to focus on shape, not amplitude.
+            # Use a larger epsilon for stability, especially if a window is flat (std=0).
+            epsilon = 1e-6
+            pred_norm = (pred_window - jnp.mean(pred_window)) / (jnp.std(pred_window) + epsilon)
+            true_norm = (true_ei - jnp.mean(true_ei)) / (jnp.std(true_ei) + epsilon)
+
+            # The loss for this specific alignment is the Mean Squared Error
+            mse = jnp.mean((pred_norm - true_norm)**2)
+            return mse
+
+        # 2. Calculate the loss for ALL possible offsets
+        offsets = jnp.arange(max_offset + 1)
+        all_mse_losses = vmap(compute_loss_at_offset)(offsets)
+
+
+        temperature = 10.0
+        weights = jax.nn.softmax(-all_mse_losses * temperature)
+
+        final_loss = jnp.sum(weights * all_mse_losses)
+
+
+        return final_loss
 
     
     def train(self):
+        epoch_losses = []
         for epoch in range(self.num_epochs):
             epoch_loss = 0.0
             
             loss_val, gradient = self.jitted_grad(self.opt_params, self.data_point)
+            flat_grads, _ = jax.tree_util.tree_flatten(gradient)
+            if flat_grads: # Ensure list is not empty
+                grad_norm = jnp.linalg.norm(jnp.concatenate([g.flatten() for g in flat_grads]))
+                print(f"Epoch {epoch}, Loss {loss_val}, Grad Norm: {grad_norm}")
+            else:
+                print(f"Epoch {epoch}, Loss {loss_val}, No gradients found.")
             updates, self.opt_state = self.optimizer.update(gradient, self.opt_state)
             self.opt_params = optax.apply_updates(self.opt_params, updates)
             epoch_loss += loss_val
             self.cell.compute_compartment_centers()
         
             print(f"epoch {epoch}, loss {epoch_loss}")
+            epoch_losses.append(epoch_loss)
+        sim_outputs = self.simulate(self.opt_params)
+        sim_ei = self.gen_ei(sim_outputs, self.opt_params)
+        return fh.animate_519_array(sim_ei, title="Example Electrical Image", cell=self.cell), fh.plot_default_simulation_output(sim_outputs, current, time_vec)
+    
+    
         
     
