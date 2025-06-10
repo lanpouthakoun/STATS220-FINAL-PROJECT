@@ -56,7 +56,7 @@ def compute_eap(sim_outputs, current_distances, compartment_surface_areas, rho=1
     resistivity = rho/(4*jnp.pi)
     surface_currents = sim_outputs[1:]
     currents = surface_currents * compartment_surface_areas[None,:,None]
-    v_extra = jnp.sum(currents.sum(axis=0) / current_distances[:,:,None], axis=1) * resistivity
+    v_extra = jnp.sum(currents.sum(axis=0) / (1e-6 + current_distances[:,:,None]), axis=1) * resistivity
     return v_extra
 
 def __plot_static_ei_helper(ei:np.ndarray, LITKE_ARRAY_MAP:np.ndarray, title:str, ax=None, special_elecs:np.ndarray=None, basecolor='r', special_colors=None, cell=None):

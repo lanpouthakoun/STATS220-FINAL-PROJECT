@@ -27,13 +27,21 @@ class JaxleyTrainer:
         self.cell = cell
         self.data_point = data
         
-        self.v_init = -64
         self.i_delay = 1.0  # ms
         self.i_dur = 0.15  # ms
         self.i_amp = 3.9  # nA
         self.electrode = generate_electrode_map(519)
         self.ncomp = self.cell.shape[1]
         self.params = self.setup_params()
+        for i, param_dict in enumerate(self.params):
+            for param_name, param_values in param_dict.items():
+                if param_name in ['radius', 'length']:
+                    print(f"Branch {i}, {param_name}: shape={param_values.shape}")
+                    print(f"  min={jnp.min(param_values):.10f}")
+                    print(f"  max={jnp.max(param_values):.10f}")
+                    print(f"  mean={jnp.mean(param_values):.10f}")
+                    print(f"  any_nan={jnp.any(jnp.isnan(param_values))}")
+                    print(f"  any_inf={jnp.any(jnp.isinf(param_values))}")
         transforms = [{k: self.create_transforms(k) for k in param} for param in self.params]
 
         self.tf = jt.ParamTransform(transforms)
@@ -45,16 +53,35 @@ class JaxleyTrainer:
         self.delta_t = 0.05 # ms
         self.t_max = 5
         
-        
+        self.num_epochs = epochs
         self.current_compartment_positions = fh.compute_comp_xyz(self.cell)
         self.compartment_surface_areas = fh.get_surface_areas(self.cell) * 10E-8  
         self.opt_params = self.tf.inverse(self.params)
+
+        hold_steps = 15000  # Number of steps to hold the learning rate constant
+        decay_steps = 30000  # Total training steps (or however many steps you want the cosine decay to complete)
+
+        # 1. Constant learning rate for first 5000 steps
+        constant = optax.constant_schedule(value=1e-1)
+
+        # 2. Cosine decay from 1e-1 to 1e-5
+        cosine = optax.cosine_decay_schedule(
+            init_value=1e-1,
+            decay_steps=decay_steps - hold_steps,
+            alpha=1e-5 / 1e-1  # final_lr / init_lr
+        )
+
+        # Combine the schedules
+        schedule = optax.join_schedules(
+            schedules=[constant, cosine],
+            boundaries=[hold_steps]
+        )
         self.optimizer = optax.chain(
             optax.clip_by_global_norm(1.0), 
-            optax.adam(learning_rate=1e-1)
+            optax.adam(learning_rate=schedule)
         )
         self.opt_state = self.optimizer.init(self.opt_params)
-        self.num_epochs = epochs
+        
         self.jitted_grad = jit(value_and_grad(self.loss, argnums=0))
 
     def compute_comp_xyz(self, transformed_params):
@@ -103,15 +130,19 @@ class JaxleyTrainer:
         JAX-compatible version
         '''
         all_radii = []
+        all_lengths = []
         
         for param_dict in transformed_params:
             if 'radius' in param_dict:
                 all_radii.append(param_dict['radius'])
+            if 'length' in param_dict:
+                all_lengths.append(param_dict['length'])
 
         radii = jnp.concatenate(all_radii) 
+        lengths = jnp.concatenate(all_lengths) 
 
         
-        surf_areas = 2 * jnp.pi * radii * self.lengths
+        surf_areas = 2 * jnp.pi * radii * lengths
         return surf_areas
     
     def create_transforms(self, name: str) -> jt.Transform:
@@ -122,6 +153,8 @@ class JaxleyTrainer:
         # --- For morphology coordinates ---
         if name in ['x', 'y', 'z']:
             return jt.AffineTransform(1.0, 0.0)  # No constraints
+        if name in ['radius', 'length']:
+            return jt.ChainTransform([jt.SoftplusTransform(0), jt.AffineTransform(10, 0)])
         
         return jt.AffineTransform(1.0, 0.0)
         
@@ -132,6 +165,7 @@ class JaxleyTrainer:
         self.cell.comp("all").make_trainable("y")
         self.cell.comp("all").make_trainable("z")
         # self.cell.comp("all").make_trainable("radius")
+        # self.cell.comp("all").make_trainable("length")
         # self.cell.comp("all").make_trainable("HH_eNa")
         # self.cell.comp("all").make_trainable("HH_eK")
         # self.cell.comp("all").make_trainable('axial_resistivity')
@@ -203,7 +237,6 @@ class JaxleyTrainer:
 
         append_data_shape = list(raw_data.shape)
         
-        # Find which axis has 512 or 519
         for i, dim_size in enumerate(raw_data.shape):
             if dim_size == 512 or dim_size == 519:
                 critical_axis = i
@@ -239,7 +272,6 @@ class JaxleyTrainer:
                 slice_sizes=[true_len, n_electrodes]
             )
 
-            
             epsilon = 1e-6
             pred_norm = (pred_window - jnp.mean(pred_window)) / (jnp.std(pred_window) + epsilon)
             true_norm = (true_ei - jnp.mean(true_ei)) / (jnp.std(true_ei) + epsilon)
@@ -267,6 +299,8 @@ class JaxleyTrainer:
             
             loss_val, gradient = self.jitted_grad(self.opt_params, self.data_point)
             flat_grads, _ = jax.tree_util.tree_flatten(gradient)
+            if jnp.isnan(loss_val):
+                break
             if flat_grads: 
                 grad_norm = jnp.linalg.norm(jnp.concatenate([g.flatten() for g in flat_grads]))
                 print(f"Epoch {epoch}, Loss {loss_val}, Grad Norm: {grad_norm}")
@@ -286,7 +320,7 @@ class JaxleyTrainer:
 
 
         sim_ei = self.predict(final_params)
-        return final_params, fh.animate_519_array(sim_ei, title="Example Electrical Image", cell=self.cell)
+        return final_params, sim_ei, epoch_losses
     
     
         
