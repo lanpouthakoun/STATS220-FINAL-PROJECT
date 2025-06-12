@@ -8,7 +8,6 @@ import jaxley as jx
 from jaxley.channels import HH
 from jaxley.synapses import IonotropicSynapse
 import matplotlib.pyplot as plt
-from helperFuncs import generate_electrode_map
 import jaxley.optimize.transforms as jt
 import functions_helper as fh
 from constants import LITKE_519_ARRAY_MAP, LITKE_519_ARRAY_GRID
@@ -30,7 +29,7 @@ class JaxleyTrainer:
         self.i_delay = 1.0  # ms
         self.i_dur = 0.15  # ms
         self.i_amp = 3.9  # nA
-        self.electrode = generate_electrode_map(519)
+        self.electrode = LITKE_519_ARRAY_MAP
         self.ncomp = self.cell.shape[1]
         self.params = self.setup_params()
         for i, param_dict in enumerate(self.params):
