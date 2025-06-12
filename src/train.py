@@ -281,12 +281,10 @@ class JaxleyTrainer:
         offsets = jnp.arange(max_offset + 1)
         all_mse_losses = vmap(compute_loss_at_offset)(offsets)
 
-        
         temperature = 1.0
         weights = jax.nn.softmax(-all_mse_losses * temperature)
 
         final_loss = jnp.sum(weights * all_mse_losses)
-
 
         return final_loss
 
@@ -315,12 +313,5 @@ class JaxleyTrainer:
         # xs,ys,zs = self.final_compute_xyz(final_params) 
         # self.cell.comp(all).move_to(xs,ys,zs, update_nodes=True)
 
-
-
-
         sim_ei = self.predict(final_params)
         return final_params, sim_ei, epoch_losses
-    
-    
-        
-    
